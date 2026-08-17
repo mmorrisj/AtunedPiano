@@ -54,6 +54,50 @@ and run `scripts/analyze_recording.py` against it whenever the estimator changes
 the fitted B or in the residuals on that file is a signal even when the test suite is
 silent.
 
+## Measured recovery
+
+`scripts/validate_synthetic.py`, all 88 keys, 3 seeds each, 3 s notes at 48 kHz. B error is
+relative; f0 error is absolute in cents. "Jitter" is the standard deviation of random
+per-partial gain, which stops the estimator leaning on a tidy amplitude roll-off.
+
+| Condition | Band | B err median | B err p95 | f0 err p95 |
+|---|---|---|---|---|
+| clean | bass A0–B2 | 0.000% | 0.001% | 0.0001c |
+| | mid C3–B5 | 0.000% | 0.000% | 0.0001c |
+| | treble C6–C8 | 0.000% | 0.000% | 0.0000c |
+| 30 dB SNR, 6 dB jitter | bass A0–B2 | 0.020% | 0.084% | 0.0108c |
+| | mid C3–B5 | 0.007% | 0.048% | 0.0088c |
+| | treble C6–C8 | 0.000% | 0.001% | 0.0019c |
+| 20 dB SNR, 6 dB jitter | bass A0–B2 | 0.064% | 0.274% | 0.0340c |
+| | mid C3–B5 | 0.019% | 0.140% | 0.0261c |
+| | treble C6–C8 | 0.001% | 0.004% | 0.0041c |
+| 12 dB SNR, 6 dB jitter | bass A0–B2 | 0.144% | 0.628% | 0.0834c |
+| | mid C3–B5 | 0.041% | 0.415% | 0.0588c |
+| | treble C6–C8 | 0.002% | 0.011% | 0.0100c |
+
+The estimator also finds a piano detuned by ±90 cents from nominal without loss of
+accuracy, which is what a pitch-raise candidate looks like.
+
+Three things in this table are worth reading rather than skimming:
+
+**The bass is the weak band, not the treble.** This is the opposite of what the raw B
+values suggest, and it is the expected result. Bass B is small — around 1e-4 — so the whole
+inharmonic signature across the available partials amounts to a couple of cents, and noise
+of a few tenths of a cent per peak eats a real fraction of it. The treble has the opposite
+problem in a form that does not show up as error: enormous B, unmistakable in the spectrum,
+but very few partials below Nyquist to fit it with.
+
+**Accuracy collapses below about 12 dB SNR, in the bass specifically.** Individual bass
+notes at 6 dB SNR have been seen 33% out on B while reporting a standard error of 6% — the
+uncertainty estimate is not reliable that far down, because with five surviving partials the
+residual-based variance is itself barely determined. Do not trust a bass fit from a noisy
+recording, and do not trust its error bar either. The fix is a better recording, not a better
+optimizer.
+
+**Extreme treble is limited by Nyquist, not by the estimator.** C8 with treble-scale B has
+four partials below 24 kHz, which is the bare minimum for a two-parameter fit. Recording the
+top octave at 96 kHz is the reason `docs/recording-protocol.md` asks for it.
+
 ## Tolerances and what they mean
 
 Estimator accuracy is asserted on two quantities:
