@@ -56,6 +56,20 @@ capsules does not bias the result. What matters far more is a quiet room and no 
 Note the mic, the position, the room and the date in `NOTES.md`. If a future run disagrees
 with the anchor, the first question is always whether something about the capture changed.
 
+## Converting a phone recording
+
+Phone recorders usually write m4a. The analyser reads WAV, so decode once and keep both:
+commit the m4a, let the WAV stay gitignored and derived.
+
+```
+ffmpeg -i data/reference/C4-phone.m4a -c:a pcm_s24le data/reference/C4-phone.wav
+```
+
+Straight decode only — no resampling, no normalisation, no dither, no `-af` anything. The
+point of keeping the source is that the WAV can be regenerated identically later; a
+conversion that quietly alters samples destroys that, and the anchor stops being comparable
+against its own history.
+
 ## Using the anchor
 
 ```

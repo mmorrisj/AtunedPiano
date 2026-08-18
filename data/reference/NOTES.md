@@ -10,11 +10,39 @@ Add one row per recording, and re-run after any change to the DSP:
 python scripts/analyze_recording.py data/reference/<file>.wav --note <key>
 ```
 
+## Reproducing the anchor from a clean clone
+
+The compressed source is committed; the decoded WAV is not (see `.gitignore`). Decode it
+first — the analyser reads WAV only:
+
+```
+ffmpeg -i data/reference/C4-phone.m4a -c:a pcm_s24le data/reference/C4-phone.wav
+python scripts/analyze_recording.py data/reference/C4-phone.wav --note C4
+```
+
+Without ffmpeg, any libavcodec-backed decoder gives the same samples; `pip install av` in a
+throwaway environment and dump the frames, or use your platform's converter. Do not decode
+through anything that resamples, normalises or dithers.
+
+You should get, exactly:
+
+```
+note onset at 0.41 s; analysed 0.25 s from 0.86 s (searched for a steady stretch)
+B          3.297353e-04  +/- 3.2e-06
+f0         261.8955 Hz
+partial 1  261.9387 Hz  (+2.07 cents from nominal)
+residuals  0.9894 cents rms, 3.2866 max, over 17 partials
+```
+
+Small differences in the last decimal are a decoder difference and not interesting. A
+different partial count, a different segment start, or a residual that moves by more than a
+tenth of a cent means something real changed — work through "Interpreting a change" below.
+
 ## Recordings
 
 | File | Key | Piano | Mic / room | Sample rate | Date | Notes |
 |---|---|---|---|---|---|---|
-| `C4-phone.wav` | C4 | — | phone | 48 kHz mono | 2026-08-17 | Recorded as AAC 128 kbps m4a, decoded to WAV. Unison muted with a rubber wedge. Note onset at 0.40 s; peak 0.995 (one sample at full scale, effectively unclipped). Envelope shows a 10 dB dip and recovery between 0.60 and 0.85 s — see below. |
+| `C4-phone.m4a` | C4 | — | phone | 48 kHz mono | 2026-08-17 | Recorded as AAC 128 kbps m4a, decoded to WAV. Unison muted with a rubber wedge. Note onset at 0.40 s; peak 0.995 (one sample at full scale, effectively unclipped). Envelope shows a 10 dB dip and recovery between 0.60 and 0.85 s — see below. |
 
 ## Measurements
 
@@ -25,7 +53,7 @@ gives B = 3.297e-4 with 0.99 cents RMS over 17 partials.
 
 | Date | File | B | f0 (Hz) | partial 1 vs nominal | residual RMS | partials | Comment |
 |---|---|---|---|---|---|---|---|
-| 2026-08-17 | `C4-phone.wav` | 3.29e-4 ± 2e-6 | 261.90 | +1.5 cents (measured) | 0.32–0.53 c | 13–16 | Stable across window lengths 0.25–3.0 s and start times 0.55–1.8 s. Residuals unstructured; no growth with n. |
+| 2026-08-17 | `C4-phone.m4a` | 3.29e-4 ± 2e-6 | 261.90 | +1.5 cents (measured) | 0.32–0.53 c | 13–16 | Stable across window lengths 0.25–3.0 s and start times 0.55–1.8 s. Residuals unstructured; no growth with n. |
 
 ## What this recording established
 
@@ -103,7 +131,7 @@ byte-identical to the copy that arrived by upload (md5 8ae25ba1b3ab78b8772fa73f4
 107494 bytes both). The AAC 128 kbps encoding came from the phone's recorder, not from
 anything in between.
 
-**Do not analyse the tail.** Windows starting past about 2 s on this file return B values
+**Do not analyse the tail.** Windows starting past about 2 s on this recording return B values
 between 0 and 2e-4 — the note has decayed far enough that the tracker follows noise peaks
 rather than partials. These fits used to be returned as confident numbers; they are now
 refused, on residuals of 5.5 cents and above against 0.2–0.5 for a live segment.

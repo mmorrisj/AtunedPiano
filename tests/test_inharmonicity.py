@@ -283,6 +283,34 @@ class TestSegmentChoice:
         assert relative_B_error(estimate.B, note.B) < 0.01
         assert estimate.spectrum.segment.onset == pytest.approx(0.8, abs=0.05)
 
+    @pytest.mark.parametrize(
+        "lead,trail", [(0.0, 0.0), (0.371, 0.0), (2.0, 0.0), (0.0, 20.0), (1.234, 8.0)]
+    )
+    def test_silence_around_the_note_does_not_move_the_answer(self, lead, trail):
+        # Recordings have dead air at both ends: reaching for the key, and letting it ring
+        # out before stopping the recorder. Neither should reach the measurement. Leading
+        # room tone is skipped by onset detection. Trailing silence is excluded by the
+        # search taking the *earliest* steady candidate -- the note's own steady stretch
+        # always precedes the silence, so silence is never reached. The level floor and the
+        # residual guard sit behind that as backstops for a recording with no steady stretch
+        # at all; neither is what does the work here.
+        note = synth_key(notes.note_to_midi("C4"), duration=3.0, n_partials=20, snr_db=40.0)
+        rng = np.random.default_rng(0)
+        room = float(np.sqrt(np.mean(note.signal**2))) * 1e-3
+        padded = np.concatenate(
+            [
+                rng.normal(0.0, room, int(lead * note.sample_rate)),
+                note.signal,
+                rng.normal(0.0, room, int(trail * note.sample_rate)),
+            ]
+        )
+        reference = estimate_key(note.signal, note.sample_rate, "C4")
+        padded_estimate = estimate_key(padded, note.sample_rate, "C4")
+
+        assert padded_estimate.B == pytest.approx(reference.B, rel=0.005)
+        assert padded_estimate.n_partials == reference.n_partials
+        assert padded_estimate.spectrum.segment.onset == pytest.approx(lead, abs=0.05)
+
     def test_avoids_a_segment_that_would_bias_the_low_partials(self):
         # Reproduces the failure found on the first real recording: a dip and recovery in
         # the envelope, and a short window sitting across it, biases the interpolated

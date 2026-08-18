@@ -273,8 +273,12 @@ def select_segment(
     With ``start`` given, that slice is used as-is (seconds from the beginning of the file)
     and no search happens -- useful for reproducing a specific reading. Otherwise the onset
     is detected, ``attack_skip`` is measured from *there*, and the earliest window whose
-    envelope decays smoothly is taken. Earliest matters: the longer you wait, the fewer
-    upper partials are still above the noise, and those are what determine B.
+    envelope decays smoothly is taken. Earliest matters twice over: the longer you wait, the
+    fewer upper partials are still above the noise, and those are what determine B; and
+    preferring the earliest is also what keeps trailing silence out of the result, since a
+    note's own steady stretch always precedes the dead air after it. ``min_level_db`` is a
+    backstop for the case where no candidate is steady, not the mechanism that excludes
+    silence.
 
     Falls back to whatever is available on a recording too short for the ideal window, and
     to the steadiest candidate if none clears the tolerance, rather than refusing outright.
