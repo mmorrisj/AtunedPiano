@@ -74,11 +74,34 @@ bad 0.55 s segment where two partials were 9 cents out. The two errors were near
 antisymmetric and cancelled in the fit. This is the residual diagnostic doing exactly its
 job: B alone would have looked fine, and the residual column is what flagged the problem.
 
-**One thing this file cannot settle.** The envelope *rises* about 10 dB between 0.65 and
-0.85 s. A single decaying string does not do that. It is either a beat null recovering or
-the phone's automatic gain control pumping, and one recording cannot separate the two.
-Disable gain control / "Enhance Recording" on the next capture; if the dip persists, it is
-acoustic.
+**The 10 dB dip is acoustic, not the phone — settled.** The envelope falls and recovers
+about 10 dB between 0.65 and 0.85 s, which a single decaying string does not do. Gain
+control and a beat null were both candidates; per-partial band envelopes separate them,
+because AGC moves every partial in lockstep and beating does not:
+
+| dB re. that partial at 0.45 s | n=1 | n=2 | n=3 | n=4 | n=5 | n=6 |
+|---|---|---|---|---|---|---|
+| 0.65 s | −13.1 | −25.5 | −12.8 | −5.3 | −5.6 | −4.7 |
+| 0.90 s | −6.3 | −9.6 | −19.4 | −9.0 | −8.6 | −9.5 |
+
+Partials 1 and 2 dip and then recover by 13–16 dB. Partials 4, 5 and 6 decay smoothly
+straight through with no dip at all. Not gain control.
+
+The mechanism shows in the sidebands: partial 1 carries symmetric ±4.2 cent sidebands at
+−28 dB, which at 261.9 Hz is ±0.64 Hz — amplitude modulation at 0.64 Hz, period ~1.6 s,
+giving exactly one null inside this window. Low partials only, with the unison wedged, is
+the false-beat signature: twin partials from slight string asymmetry, which `research.md`
+§9 lists and which affects low partials most. An imperfectly seated wedge letting a unison
+partner ring through would look much the same.
+
+Either way it is a property of the string, not of the capture, so it will recur on every
+note and cannot be recorded away. This is what the steady-segment search exists to step
+around — the design predates knowing the cause, and the cause vindicates it.
+
+**The upload path did not alter the audio.** The m4a as committed to the repo is
+byte-identical to the copy that arrived by upload (md5 8ae25ba1b3ab78b8772fa73f48c8d77d,
+107494 bytes both). The AAC 128 kbps encoding came from the phone's recorder, not from
+anything in between.
 
 **Do not analyse the tail.** Windows starting past about 2 s on this file return B values
 between 0 and 2e-4 — the note has decayed far enough that the tracker follows noise peaks

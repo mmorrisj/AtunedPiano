@@ -72,8 +72,11 @@ What to look at, in order:
    stiff-string model is not describing this string, and the B value is a fitted number
    rather than a measurement. Above 3 cents RMS the fit is refused outright.
 2. **The segment line.** The report says where it looked and how steady the envelope was
-   there. A steadiness warning means no part of the note decayed smoothly — usually gain
-   control, sometimes a heavy beat — and partial frequencies may be biased.
+   there. A steadiness warning means no part of the note decayed smoothly, and partial
+   frequencies may be biased. To tell a beat from processing, compare partials: gain
+   control moves them all in lockstep, while a beat null hits some and leaves others
+   decaying smoothly. On the first reference recording that test showed partials 1–2
+   dipping 13–16 dB while 4–6 were untouched — a false beat, not the phone.
 3. **Rejected partials.** One or two is ordinary. Several suggests unison beating, in which
    case the muting was not doing its job.
 4. **B against the typical value** the script prints for that key. An order of magnitude out
