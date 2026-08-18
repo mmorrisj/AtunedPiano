@@ -40,6 +40,14 @@ from .spectrum import DEFAULT_ZERO_PAD, Spectrum, analyse
 # larger B has almost certainly mis-indexed a partial.
 B_MAX = 0.06
 
+# A fit whose partials disagree with the model by more than this is not a measurement of
+# anything. The number is calibrated on the first reference recording: fits from a live
+# segment land at 0.2-0.5 cents, while fits from the decayed tail -- where the tracker is
+# following noise peaks rather than partials -- land at 5.5 cents and above, with nothing
+# in between. Such a fit still returns a confident-looking B, which is precisely why it
+# has to be refused rather than reported.
+MAX_RESIDUAL_CENTS = 3.0
+
 
 class InharmonicityError(RuntimeError):
     """Raised when a note yields too little usable spectral structure to fit."""
@@ -288,6 +296,8 @@ def estimate_inharmonicity(
     search_cents: float = 40.0,
     hint_cents: float = 100.0,
     outlier_cents: float = 20.0,
+    max_residual_cents: float = MAX_RESIDUAL_CENTS,
+    start: float | None = None,
     attack_skip: float | None = None,
     duration: float | None = None,
     zero_pad: int = DEFAULT_ZERO_PAD,
@@ -305,17 +315,24 @@ def estimate_inharmonicity(
         hint_cents: How far partial 1 may sit from ``f0_hint`` -- i.e. how out of tune the
             piano is allowed to be.
         outlier_cents: Residual above which a partial is dropped and the fit repeated.
+        max_residual_cents: Refuse the fit if the surviving partials still disagree with
+            the model by more than this in RMS. This is what stops a decayed tail, where
+            the tracker is following noise peaks, from being reported as a measurement.
+        start: Analyse from this many seconds into the recording, skipping the search for a
+            steady segment. Use it to reproduce a specific reading.
         attack_skip: Seconds of onset to discard. ``None`` scales it with the note.
         duration: Analysis window in seconds. ``None`` scales it with the note.
         zero_pad: FFT zero-padding factor, for sub-bin peak location.
 
     Raises:
-        InharmonicityError: if fewer than ``min_partials`` usable partials are found.
+        InharmonicityError: if fewer than ``min_partials`` usable partials are found, or if
+            the fitted model disagrees with them by more than ``max_residual_cents``.
     """
     spectrum = analyse(
         signal,
         sample_rate,
         f0_hint,
+        start=start,
         attack_skip=attack_skip,
         duration=duration,
         zero_pad=zero_pad,
@@ -338,6 +355,16 @@ def estimate_inharmonicity(
     f0, B, B_stderr, f0_stderr_cents = fit_nonlinear(indices, frequencies, linear)
 
     residuals = _residual_cents(f0, B, indices, frequencies)
+    residual_rms = float(np.sqrt(np.mean(residuals**2)))
+    if residual_rms > max_residual_cents:
+        # The fit converged and B looks like a number, which is exactly the danger. Partials
+        # this far from the model are not partials of this string.
+        raise InharmonicityError(
+            f"fit residual {residual_rms:.2f} cents rms over {len(kept)} partials exceeds "
+            f"{max_residual_cents:.2f}; the segment analysed does not contain a clean "
+            f"partial series (decayed too far, or the wrong note)"
+        )
+
     partials = tuple(
         Partial(p.index, p.frequency, p.amplitude, float(r))
         for p, r in zip(kept, residuals)

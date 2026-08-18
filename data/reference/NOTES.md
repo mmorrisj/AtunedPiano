@@ -18,8 +18,10 @@ python scripts/analyze_recording.py data/reference/<file>.wav --note <key>
 
 ## Measurements
 
-Canonical run is `--attack-skip 1.20 --duration 2.0` — past the unsteady stretch near the
-onset. See the segment-position note below.
+Canonical run needs no arguments now: `analyze_recording.py <file> --note C4` detects the
+onset and searches for a steady segment on its own. The values below are from the original
+manual reading (`--start 1.20 --duration 2.0`); the automatic choice lands at 0.86 s and
+gives B = 3.297e-4 with 0.99 cents RMS over 17 partials.
 
 | Date | File | B | f0 (Hz) | partial 1 vs nominal | residual RMS | partials | Comment |
 |---|---|---|---|---|---|---|---|
@@ -59,8 +61,12 @@ amplitude change within a short window biases interpolated peak frequencies badl
 
 The same 0.25 s window is fine from 1.0 s onward. Window *length* was never the issue — an
 earlier reading of this file blamed length, and the position sweep above disproves it.
-`select_segment` should search for a stretch where the envelope is smoothly decaying instead
-of trusting a fixed offset.
+
+**Fixed.** `select_segment` now detects the note onset (this file has 0.41 s of lead-in, so
+the old fixed offset was measured from the wrong place to begin with) and then searches for
+a window whose log envelope is close to a straight line. On this recording it settles on
+0.86 s. A fit whose partials disagree with the model by more than 3 cents RMS is now refused
+outright rather than returned as a number.
 
 **B survived a segment the residuals correctly rejected.** Across every window length
 (0.25–3.0 s) and every start time up to 1.8 s, B stayed within 3.27–3.30e-4 — including the
@@ -75,9 +81,9 @@ Disable gain control / "Enhance Recording" on the next capture; if the dip persi
 acoustic.
 
 **Do not analyse the tail.** Windows starting past about 2 s on this file return B values
-between 0 and 2e-4 — the note has decayed far enough that too few upper partials survive and
-the fit degenerates. The estimator does not currently refuse these; it returns a confident
-wrong number.
+between 0 and 2e-4 — the note has decayed far enough that the tracker follows noise peaks
+rather than partials. These fits used to be returned as confident numbers; they are now
+refused, on residuals of 5.5 cents and above against 0.2–0.5 for a live segment.
 
 ## Interpreting a change
 

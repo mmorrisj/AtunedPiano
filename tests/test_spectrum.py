@@ -47,12 +47,12 @@ class TestSegmentSelection:
     def test_skips_the_attack(self):
         signal = np.concatenate([np.zeros(4800), np.ones(96_000)])
         segment = spectrum.select_segment(signal, 48_000, 440.0, attack_skip=0.1)
-        assert np.all(segment == 1.0)
+        assert np.all(segment.samples == 1.0)
 
     def test_falls_back_when_the_recording_is_short(self):
         signal = np.ones(12_000)  # 0.25 s, shorter than skip + ideal window
         segment = spectrum.select_segment(signal, 48_000, 55.0)
-        assert 0 < segment.size <= signal.size
+        assert 0 < len(segment) <= signal.size
 
     def test_raises_on_a_signal_too_short_to_analyse(self):
         with pytest.raises(ValueError):
@@ -77,7 +77,7 @@ class TestPeakRefinement:
         # is visibly wrong and the interpolation has something to fix.
         frequency = 440.0 + 0.37
         segment = spectrum.select_segment(sine(frequency, 0.5), 48_000, 440.0, attack_skip=0.0)
-        spec = spectrum.compute_spectrum(segment, 48_000, zero_pad=1)
+        spec = spectrum.compute_spectrum(segment.samples, 48_000, zero_pad=1)
         peak = spec.peak_near(frequency, 50.0)
         raw_bin_hz = spec.frequencies[peak.bin_index]
         assert abs(peak.frequency - frequency) < abs(raw_bin_hz - frequency)
@@ -111,8 +111,8 @@ class TestSpectrumProperties:
 
     def test_zero_padding_increases_resolution(self):
         segment = spectrum.select_segment(sine(440.0, 0.5), 48_000, 440.0, attack_skip=0.0)
-        coarse = spectrum.compute_spectrum(segment, 48_000, zero_pad=1)
-        fine = spectrum.compute_spectrum(segment, 48_000, zero_pad=8)
+        coarse = spectrum.compute_spectrum(segment.samples, 48_000, zero_pad=1)
+        fine = spectrum.compute_spectrum(segment.samples, 48_000, zero_pad=8)
         assert fine.bin_width < coarse.bin_width
         assert fine.n_fft > coarse.n_fft
 
@@ -124,3 +124,82 @@ class TestSpectrumProperties:
     def test_rejects_invalid_zero_pad(self):
         with pytest.raises(ValueError):
             spectrum.compute_spectrum(np.ones(1024), 48_000, zero_pad=0)
+
+
+class TestOnsetDetection:
+    """A recording starts when the note starts, not when the file does."""
+
+    def test_finds_a_note_buried_behind_lead_in(self):
+        note = synth_note(220.0, 3e-4, duration=2.0)
+        lead_in = np.random.default_rng(0).normal(0.0, 1e-3, size=int(0.7 * note.sample_rate))
+        signal = np.concatenate([lead_in, note.signal])
+        assert spectrum.find_onset(signal, note.sample_rate, 220.0) == pytest.approx(0.7, abs=0.05)
+
+    def test_a_file_that_starts_at_the_note_has_onset_near_zero(self):
+        note = synth_note(220.0, 3e-4, duration=2.0)
+        assert spectrum.find_onset(note.signal, note.sample_rate, 220.0) < 0.05
+
+    def test_attack_skip_is_measured_from_the_onset_not_the_file(self):
+        note = synth_note(220.0, 3e-4, duration=2.0)
+        lead_in = np.zeros(int(0.7 * note.sample_rate))
+        signal = np.concatenate([lead_in, note.signal])
+        segment = spectrum.select_segment(signal, note.sample_rate, 220.0, attack_skip=0.1)
+        assert segment.onset == pytest.approx(0.7, abs=0.05)
+        assert segment.start >= 0.75  # past the lead-in, not 0.1 s into the silence
+
+    def test_silence_is_rejected(self):
+        with pytest.raises(ValueError):
+            spectrum.find_onset(np.zeros(48_000), 48_000, 440.0)
+
+
+class TestSteadySegmentSearch:
+    """Where the segment sits matters as much as how long it is."""
+
+    def unsteady(self, dip_at: float, note):
+        """Impose a dip-and-recovery on a note, like the one in the first real recording."""
+        t = np.arange(note.signal.size) / note.sample_rate
+        gain = 1.0 - 0.9 * np.exp(-(((t - dip_at) / 0.08) ** 2))
+        return note.signal * gain
+
+    def test_skips_a_dip_and_recovery(self):
+        # The naive choice -- a fixed offset after the onset -- lands inside the dip. The
+        # search has to move past it, which is the whole point of the change.
+        note = synth_note(220.0, 3e-4, duration=3.0, decay_time=4.0)
+        signal = self.unsteady(0.25, note)
+
+        naive = spectrum.select_segment(signal, note.sample_rate, 220.0, start=0.1)
+        assert naive.start < 0.25 < naive.start + naive.duration  # contains the dip
+        assert not naive.is_steady
+
+        chosen = spectrum.select_segment(signal, note.sample_rate, 220.0)
+        assert chosen.start >= 0.25  # no longer contains it
+        assert chosen.is_steady
+        assert chosen.steadiness_db < naive.steadiness_db
+
+    def test_a_smooth_decay_is_analysed_immediately(self):
+        # Steep is fine; only curvature is disqualifying. A clean note should not send the
+        # search wandering down the decay, where fewer partials survive.
+        note = synth_note(220.0, 3e-4, duration=3.0)
+        segment = spectrum.select_segment(note.signal, note.sample_rate, 220.0)
+        assert segment.start < 0.2
+        assert segment.is_steady
+
+    def test_scores_a_dip_as_less_steady_than_a_clean_decay(self):
+        note = synth_note(220.0, 3e-4, duration=3.0, decay_time=4.0)
+        clean = spectrum.select_segment(note.signal, note.sample_rate, 220.0, start=0.3)
+        dipped = spectrum.select_segment(self.unsteady(0.35, note), note.sample_rate, 220.0, start=0.3)
+        assert dipped.steadiness_db > clean.steadiness_db
+        assert not dipped.is_steady
+
+    def test_explicit_start_skips_the_search(self):
+        note = synth_note(220.0, 3e-4, duration=3.0)
+        segment = spectrum.select_segment(note.signal, note.sample_rate, 220.0, start=1.0)
+        assert segment.searched is False
+        assert segment.start == pytest.approx(1.0, abs=0.01)
+
+    def test_reports_where_it_looked(self):
+        note = synth_note(220.0, 3e-4, duration=3.0)
+        spec = spectrum.analyse(note.signal, note.sample_rate, 220.0)
+        assert spec.segment is not None
+        assert len(spec.segment) == int(round(spec.segment.duration * note.sample_rate))
+        assert spec.segment.level_db <= 0.0

@@ -39,11 +39,14 @@ distorted one.
 |---|---|---|
 | Sample rate | 48 kHz; **96 kHz above C6** | The top octave runs out of partials below Nyquist. C8 has four at 48 kHz, which is the bare minimum for a two-parameter fit. |
 | Bit depth | 24-bit, or 32-bit float | Headroom, so you can record conservatively without losing the quiet upper partials. |
-| Format | WAV, uncompressed | Lossy codecs discard exactly the low-level high-frequency content B depends on. Never analyse an MP3 or an AAC voice memo. |
+| Format | WAV, uncompressed | Lossy codecs discard the low-level high-frequency content B depends on. In practice the first reference recording survived AAC at 128 kbps with partials trackable to −60 dB, so this is a preference rather than an absolute — but the margin is unknown and a lower bitrate has no reason to be safe. Record lossless when the app lets you. |
 | Level | peak around −12 dBFS | `analyze_recording.py` warns about clipping; do not analyse a file it warns about. |
 | Length | 3–5 seconds | Longer than the analysis window with room to spare. The script uses a mid-decay segment, not the whole file. |
 | Channels | mono, or a stereo pair that gets averaged | Either works; the script averages channels. |
-| Processing | none | No noise reduction, no EQ, no normalisation, no compressor. Every one of them moves partial amplitudes, and noise reduction in particular eats the quiet upper partials. |
+| Processing | none | No noise reduction, no EQ, no normalisation, no compressor, and **no automatic gain control**. Every one of them moves partial amplitudes; noise reduction eats the quiet upper partials, and AGC pumps the envelope in a way the analysis has to work around. On a phone this usually means turning off "Voice Isolation" or "Enhance Recording". |
+
+Lead-in silence is fine — the analysis detects the note onset and measures from there, so
+you do not need to trim the file. Let it run a second before you play.
 
 Mic roughly a metre from the strings, off to one side rather than directly over the hammer
 line, in as quiet a room as you can manage. A phone or a cheap USB mic is genuinely fine:
@@ -67,12 +70,15 @@ What to look at, in order:
 1. **The residual column.** On a clean single string it should be small and unstructured. A
    systematic pattern — residuals growing with `n`, or alternating sign — means the
    stiff-string model is not describing this string, and the B value is a fitted number
-   rather than a measurement.
-2. **Rejected partials.** One or two is ordinary. Several suggests unison beating, in which
+   rather than a measurement. Above 3 cents RMS the fit is refused outright.
+2. **The segment line.** The report says where it looked and how steady the envelope was
+   there. A steadiness warning means no part of the note decayed smoothly — usually gain
+   control, sometimes a heavy beat — and partial frequencies may be biased.
+3. **Rejected partials.** One or two is ordinary. Several suggests unison beating, in which
    case the muting was not doing its job.
-3. **B against the typical value** the script prints for that key. An order of magnitude out
+4. **B against the typical value** the script prints for that key. An order of magnitude out
    almost always means mis-indexed partials rather than an unusual piano.
-4. **Partial 1 against your ear.** You tuned this note. If the script says it is 15 cents
+5. **Partial 1 against your ear.** You tuned this note. If the script says it is 15 cents
    flat and you tuned it to a fork, something upstream is wrong — the sample rate metadata,
    the note argument, or the concert pitch (`--a4`).
 
