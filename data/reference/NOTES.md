@@ -45,66 +45,85 @@ Unison wedged except where noted.
 
 | File | Key | B | resid | n | partial 1 vs nominal | Notes |
 |---|---|---|---|---|---|---|
-| `C1.m4a`, `C1-2.m4a` | C1 | — | — | — | — | Both refused. See below. |
+| `C1.m4a` | C1 | 3.656e-4 | 2.19 c | 19 | +2.92 c | Residuals trend with `n`; see below. |
+| `C1-2.m4a` | C1 | 3.712e-4 | 2.88 c | 20 | +1.83 c | |
 | `C2-2.m4a` | C2 | 1.598e-4 | 1.72 c | 20 | +10.19 c | |
-| `C2-2string.m4a` | C2 | 1.501e-4 | 3.24 c | 19 | +10.65 c | Two strings, deliberate. Refused by the guard. |
+| `C2-2string.m4a` | C2 | 1.580e-4 | 0.79 c | 19 | +10.47 c | Two strings, deliberate. |
 | `C3.m4a` | C3 | 1.714e-4 | 1.95 c | 20 | +3.61 c | |
-| `C4.m4a` | C4 | 3.3019e-4 | 0.99 c | 16 | +2.02 c | |
+| `C4.m4a` | C4 | 3.3043e-4 | 0.93 c | 16 | +1.99 c | |
 | `C4_2.m4a` | C4 | 3.2974e-4 | 0.99 c | 17 | +2.07 c | The original anchor. |
-| `C4-3.m4a` | C4 | 3.3021e-4 | 0.41 c | 13 | +2.48 c | |
+| `C4-3.m4a` | C4 | 3.2963e-4 | 0.43 c | 13 | +2.53 c | |
 | `C5.m4a` | C5 | 7.404e-4 | 0.65 c | 10 | +5.50 c | |
-| `C6.m4a` | C6 | 2.207e-3 | 0.79 c | 4 | +7.18 c | Needs `--start 3.5`; only 4 partials, treat as provisional. |
-| `C7.m4a` | C7 | — | — | — | — | Refused. See below. |
+| `C6.m4a` | C6 | 1.939e-3 | 0.20 c | 4 | +9.33 c | Only 4 partials; segment-dependent to about 15%. Provisional. |
+| `C7.m4a` | C7 | — | — | — | — | Refused, and it is the recording. See below. |
 
-### Repeatability: 0.15%
+### Repeatability: 0.24% at C4, 1.5% in the bass
 
-Three independent takes of C4 give **3.3019e-4, 3.2974e-4, 3.3021e-4** — a spread of
-0.145%, standard deviation 0.081%. These are not near-copies of one measurement: the
-segment search chose starts of 1.15, 0.86 and 4.15 s and fitted 16, 17 and 13 partials
-respectively, so three different stretches of three different strikes agree to a part in
-700.
+Three independent takes of C4 give **3.3043e-4, 3.2974e-4, 3.2963e-4** — a spread of
+0.24%. These are not near-copies of one measurement: the segment search chose different
+starts and fitted 16, 17 and 13 partials respectively, so three different stretches of
+three different strikes agree to a part in 400.
+
+Repeatability is not uniform across the keyboard. C4 gives 0.24%; the two C1 takes differ
+by 1.5% and the two C2 takes by 1.2%. The bass is harder to pin, as the synthetic sweep
+predicted for a quite different reason — there B is small, so its whole signature spans only
+a couple of cents.
 
 This is the number that was missing. The per-fit standard error (±3.2e-6, about 0.1%)
 turns out to be an honest estimate of real take-to-take reproducibility rather than an
-optimistic one. **Practical consequence: a difference of more than about 0.3% between two
-notes is a property of the piano, not of the measurement.** Everything below is read
-against that threshold.
+optimistic one. **Practical consequence: in the midrange a difference above about 0.5% between two notes is
+a property of the piano; in the bass the threshold is nearer 3%.** Everything below is read
+against that.
 
-### The bass/treble break is visible
+### The B curve, including a bass minimum
 
 | | B | ratio to previous octave |
 |---|---|---|
-| C2 | 1.598e-4 | |
+| C1 | 3.656e-4 | |
+| C2 | 1.598e-4 | ×0.44 |
 | C3 | 1.714e-4 | ×1.07 |
-| C4 | 3.300e-4 | ×1.93 |
+| C4 | 3.299e-4 | ×1.93 |
 | C5 | 7.404e-4 | ×2.24 |
-| C6 | 2.207e-3 | ×2.98 |
+| C6 | 1.939e-3 | ×2.62 |
 
-C2 to C3 is essentially flat — 7%, against a measurement floor of 0.3%, so real but small.
-From C3 upward B roughly doubles per octave and the ratio keeps climbing. That is the
-wound-bass to plain-wire transition: wound strings buy mass without stiffness, so B stays
-low and flat across them, and once the plain steel section starts, stiffness climbs with
-every semitone.
+Three features, and none of them is a smooth curve.
 
-The break therefore sits between C3 and C4 on this piano. **A single smooth B-vs-key curve
-fitted across that boundary will not work**, and the notes either side of it are the most
-valuable ones still unrecorded — the exact semitone where the winding stops matters more
-than another octave sample.
+**B falls from C1 to C2 before it rises.** The lowest strings are short and heavily
+overwound, which costs stiffness; a little further up the bass the strings get longer
+faster than they get thicker, and B reaches a minimum. This is the expected shape, and the
+factor of 2.3 is far outside the 1.5% bass repeatability, so it is real rather than noise.
 
-### Muting the unison costs 6% of B
+**C2 to C3 is flat.** Seven percent, against a bass repeatability of about 1.5%: real, but
+negligible next to what happens above it. Wound strings buy mass without stiffness, so B
+barely moves across them.
 
-The C2 pair is a controlled experiment: same note, same session, one string wedged versus
-two.
+**From C3 upward B roughly doubles per octave and the ratio keeps climbing.** That is the
+plain steel section, where stiffness rises with every semitone.
+
+The wound-to-plain break therefore sits between C3 and C4 on this piano. **A single smooth
+B-vs-key curve fitted across that boundary will not work**, and it has a minimum below it as
+well, so a monotonic model will not work either. The semitone where the winding stops is the
+most valuable note still unrecorded — more valuable than another octave.
+
+### What the muting comparison can and cannot show
+
+The C2 pair was meant as a controlled experiment: same note, one string wedged versus two.
 
 | | B | residual | rejected partials |
 |---|---|---|---|
 | One string | 1.5983e-4 | 1.72 c | 0 |
-| Two strings | 1.5008e-4 | 3.24 c | 1 |
+| Two strings | 1.5800e-4 | 0.79 c | 1 |
 
-B differs by 6.1% — forty times the 0.15% repeatability, so unambiguously real — and the
-residual nearly doubles, pushing the two-string fit past the 3-cent guard where it is
-refused outright. The protocol asserted that muting matters; this measures the cost of not
-doing it.
+**They differ by 1.15%, which this data cannot distinguish from take-to-take variation.**
+The two C1 takes — same string, same conditions, nothing deliberately changed — differ by
+1.5%. So the muting difference is smaller than the noise it would have to beat.
+
+An earlier version of this file reported the same comparison as a 6.1% effect and treated it
+as decisive. That was wrong, and instructively so: at the time the two-string recording was
+being fitted on a poorly chosen segment, so the 6% was mostly segment choice, not strings.
+Once segment selection improved, the difference collapsed to 1.15%. **The number moved
+because the estimator changed, which is exactly the situation "Interpreting a change" below
+is for.** Settling this needs several takes of each condition, not one of each.
 
 ## Recordings
 
@@ -204,37 +223,54 @@ between 0 and 2e-4 — the note has decayed far enough that the tracker follows 
 rather than partials. These fits used to be returned as confident numbers; they are now
 refused, on residuals of 5.5 cents and above against 0.2–0.5 for a live segment.
 
-## What the set could not measure, and why
+## The failures, and what fixing them taught
 
-Three failures, all correctly refused rather than reported as numbers. Two are estimator
-gaps and one is the recording.
+Of the three failures in the first pass, two are fixed and one is the recording. The route
+to fixing them corrected a diagnosis, which is worth recording as carefully as the fix.
 
-**C1, both takes — the fundamental is not there.** In the lowest octave the soundboard
-barely radiates 32.7 Hz, so partial 1 arrives 54 dB below the loudest partial, which is
-partial 9. The tracker starts at n=1 and takes what it finds within ±100 cents; with
-nothing real there it locks onto noise, and every subsequent index inherits the error.
-The result was B = 8.9e-3, about forty-five times too high, with residuals of ±20 cents.
+**C6 and C7 — several strikes per file.** Both hold three or four separate strikes. Onset
+detection fired on the first event over threshold, which in C7 was a quiet strike at 3.5 s
+when the loudest is at 7.5 s. Fixed: every strike is now found and fitted, and the best is
+kept — most partials among those passing the residual guard, residual breaking ties. Most
+partials rather than lowest residual, because fitting gets *easier* as a note dies and
+fewer partials survive, so ranking on residual alone drifts toward the least informative
+strike.
 
-The guard caught it, which is the system working. But the fix is clear: in the bass the
-trajectory should be bootstrapped from the strongest partial and walked outward, not
-started at n=1 on the assumption that the fundamental is present and findable.
+**C6 also needed the segment choice to escalate.** No window anywhere in that note is
+steady by the usual standard, so the steadiness search fell back to the least-unsteady
+candidate — a proxy with nothing behind it once its own precondition has failed — and
+landed on an unfittable segment. Now, when the cheap choice fails, the alternatives are
+fitted and judged by their results. C6 fits at 0.20 cents over 4 partials, though B still
+varies by about 15% depending on the segment, so treat it as provisional.
 
-**C6 and C7 — several strikes per file, and the analysis took the wrong one.** Both files
-contain three or four separate strikes. Onset detection fires on the first block that rises
-within 20 dB of the file's peak, which in C7 was a quiet strike at 3.5 s; the loudest is at
-7.5 s. C6 analysed at its real strike (`--start 3.5`) gives a clean 0.79-cent fit.
+**C1 — the diagnosis was wrong.** The first pass blamed the weak fundamental: partial 1
+arrives 54 dB below the loudest partial, the tracker starts at n=1 and locks onto noise. A
+fix was proposed on that basis. Testing the claim first showed it to be false — a synthetic
+note with its fundamental buried 52 dB down is tracked correctly every time, and one with
+its first two partials removed entirely is too. C1 was simply a bad segment, and the strike
+and segment work above fixed it without touching the tracker.
 
-The estimator assumes one note per file. Real recordings contain several attempts, which is
-how anyone actually records: play it a few times, keep the file. Onset detection should find
-*all* the strikes and analyse the best, using the residual as the criterion — the same
-signal that is already trusted to refuse a bad fit.
+What the test *did* find was narrower and real: with the first **three** partials absent the
+walk died before it started, because the consecutive-miss counter was ending it during the
+lead-in. The counter exists to stop the walk running off the top of the series, not to stop
+it beginning. It now only applies once a partial has been found, and a note is measurable
+with its first five partials missing.
 
-**C7 is also the recording.** Even at its loudest strike, C7 yields one to three partials:
-partial 3 sits 60 dB below partial 1. At 2093 Hz there are few strong partials to begin
-with, the phone capsule rolls off above 5 kHz, and 128 kbps AAC is least generous exactly
-where the content is quietest and highest. This is the case the protocol's lossless
-recommendation was written for. The top octave needs a closer mic, a firmer strike, lossless
-capture and 96 kHz — and even then it will be the hardest band on the keyboard.
+The same test run also exposed a latent mis-indexing risk nobody had reported: the
+pre-model search window was capped at a flat 340 cents, which is safe at n=1 where the
+neighbouring partial is 1200 cents away but not at n=3 where it is 498. The cap is now
+n-dependent.
+
+C1 now fits at 3.66e-4 and 3.71e-4 across two takes. The residuals, though, trend
+monotonically with `n` — about −3 cents at partial 3 rising to +3 at partial 11 — which is
+structure, not scatter. The two-parameter stiff-string model does not fully describe a
+heavily wound bass string. The fit is usable; it is not as trustworthy as C4's.
+
+**C7 is the recording, not the estimator.** Even at its loudest strike it yields one to
+three partials: partial 3 sits 60 dB below partial 1. At 2093 Hz there are few strong
+partials to begin with, the phone capsule rolls off above 5 kHz, and 128 kbps AAC is least
+generous exactly where the content is quietest and highest. The top octave needs a closer
+mic, a firmer strike, lossless capture and 96 kHz.
 
 ## Interpreting a change
 
