@@ -14,6 +14,9 @@ htmlcov/
 # reproducible for anyone cloning; the WAV is derived from it by a documented command and is
 # an order of magnitude larger. Uncompressed captures stay out entirely -- if a future anchor
 # is recorded straight to WAV it is too big to version, and NOTES.md carries the numbers.
+data/*.wav
+data/*.flac
+data/*.aiff
 data/reference/*.wav
 data/reference/*.flac
 data/reference/*.aiff
