@@ -27,7 +27,7 @@ from atunedpiano.inharmonicity import (  # noqa: E402
     InharmonicityEstimate,
     estimate_key,
 )
-from atunedpiano.spectrum import attack_skip_seconds, window_seconds  # noqa: E402
+from atunedpiano.spectrum import STEADY_TOLERANCE_DB  # noqa: E402
 from atunedpiano.synth import typical_B  # noqa: E402
 
 
@@ -63,11 +63,23 @@ def report(
     path: Path,
 ) -> None:
     print(f"{path.name}: {signal.size / sample_rate:.2f} s at {sample_rate} Hz")
+
+    segment = estimate.spectrum.segment
+    how = "searched for a steady stretch" if segment.searched else "start given"
     print(
-        f"analysis window {window_seconds(nominal_hz):.2f} s "
-        f"from {attack_skip_seconds(nominal_hz):.2f} s in, "
-        f"peak {float(np.max(np.abs(signal))):.3f}"
+        f"note onset at {segment.onset:.2f} s; analysed {segment.duration:.2f} s "
+        f"from {segment.start:.2f} s ({how})"
     )
+    print(
+        f"segment envelope departs from a smooth decay by {segment.steadiness_db:.2f} dB, "
+        f"at {segment.level_db:.1f} dB relative to the note's peak"
+    )
+    if not segment.is_steady:
+        print(
+            f"WARNING: no segment scored under {STEADY_TOLERANCE_DB:.2f} dB -- the envelope "
+            "is unsteady throughout, so partial frequencies may be biased"
+        )
+    print(f"peak sample {float(np.max(np.abs(signal))):.3f}")
     clipped = clipping_fraction(signal)
     if clipped > 1e-4:
         print(f"WARNING: {clipped * 100:.2f}% of samples at full scale -- likely clipped")
@@ -119,7 +131,17 @@ def main(argv: list[str] | None = None) -> int:
         help="how far from nominal partial 1 may sit; raise for a badly flat piano",
     )
     parser.add_argument(
-        "--attack-skip", type=float, default=None, help="seconds of onset to discard"
+        "--attack-skip",
+        type=float,
+        default=None,
+        help="seconds to discard after the detected note onset (not after the file start)",
+    )
+    parser.add_argument(
+        "--start",
+        type=float,
+        default=None,
+        help="analyse from this many seconds into the file, skipping the steady-segment "
+        "search; use to reproduce a specific reading",
     )
     parser.add_argument(
         "--duration", type=float, default=None, help="analysis window, seconds"
@@ -142,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
             max_partials=args.max_partials,
             min_partials=args.min_partials,
             hint_cents=args.hint_cents,
+            start=args.start,
             attack_skip=args.attack_skip,
             duration=args.duration,
         )
@@ -149,7 +172,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"could not fit {args.note} in {args.path.name}: {error}", file=sys.stderr)
         print(
             "Check that the note argument matches what was played, that the recording is\n"
-            "long enough, and that the piano is within --hint-cents of nominal.",
+            "long enough, and that the piano is within --hint-cents of nominal. A residual\n"
+            "complaint usually means the segment analysed had decayed too far -- try an\n"
+            "earlier --start, or record a louder note.",
             file=sys.stderr,
         )
         return 1

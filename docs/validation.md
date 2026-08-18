@@ -54,6 +54,22 @@ and run `scripts/analyze_recording.py` against it whenever the estimator changes
 the fitted B or in the residuals on that file is a signal even when the test suite is
 silent.
 
+It has already earned its place. The first reference recording found two failures the
+synthetic suite had no way to produce, because the generator emits a clean exponential decay
+starting at sample zero:
+
+- *A file does not start at the note.* The attack skip was measured from the beginning of
+  the recording, so lead-in silence pushed the analysis somewhere arbitrary. The estimator
+  now detects the onset first.
+- *A real envelope is not a clean exponential.* A 10 dB dip and recovery, sitting under the
+  analysis window, biased the interpolated frequencies of partials 1 and 2 by nine cents.
+  The estimator now searches for a stretch whose log envelope is close to a straight line.
+
+Neither changed the value of B on that recording — it came out at 3.20–3.32e-4 from every
+segment tried. What they changed was the residual, the one number that says whether to
+believe the answer. Both defects are now imposed on synthetic signals in the test suite,
+which is what the anchor is *for*: it tells you what the harness is missing.
+
 ## Measured recovery
 
 `scripts/validate_synthetic.py`, all 88 keys, 3 seeds each, 3 s notes at 48 kHz. B error is
@@ -115,6 +131,13 @@ The residual RMS in cents reported by the estimator is the in-band health check:
 synthetic signal it should sit far below the tolerance, and on a real recording it is the
 first thing to look at when a fit seems wrong. A low residual with a wrong B usually means
 partials were mis-indexed — the model fits a consistent but wrong trajectory.
+
+It is also a hard gate. A fit whose partials disagree with the model by more than
+`MAX_RESIDUAL_CENTS` (3 cents RMS) is refused rather than returned. The threshold is
+calibrated on the first reference recording, where live segments fit at 0.2–0.5 cents and
+segments from the decayed tail — where the tracker is following noise peaks — fit at 5.5
+cents and above, with nothing in between. Such a fit still produces a plausible-looking B,
+which is exactly why returning it would be worse than refusing.
 
 ## What does not count as validation
 

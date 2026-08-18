@@ -19,6 +19,7 @@ import pytest
 from atunedpiano import notes
 from atunedpiano.inharmonicity import (
     B_MAX,
+    MAX_RESIDUAL_CENTS,
     InharmonicityError,
     estimate_inharmonicity,
     estimate_key,
@@ -232,6 +233,72 @@ class TestFailureModes:
         note = synth_key(notes.note_to_midi("C8"), duration=1.0)
         estimate = estimate_key(note.signal, note.sample_rate, "C8")
         assert 0.0 <= estimate.B <= B_MAX
+
+
+class TestResidualGuard:
+    """A converged fit is not the same as a correct one."""
+
+    def test_refuses_a_fit_the_model_cannot_explain(self):
+        # Noise shaped to have peaks near the harmonics of C4, so the tracker finds
+        # "partials" and the fit converges -- on nothing. Without the guard this returns a
+        # confident B, which is how a decayed tail gets reported as a measurement.
+        rng = np.random.default_rng(3)
+        sample_rate, f0 = 48_000, notes.note_to_hz("C4")
+        t = np.arange(3 * sample_rate) / sample_rate
+        signal = sum(
+            np.sin(2 * np.pi * notes.shift_cents(n * f0, rng.uniform(-60, 60)) * t)
+            / n
+            for n in range(1, 15)
+        )
+        with pytest.raises(InharmonicityError, match="residual"):
+            estimate_inharmonicity(signal, sample_rate, f0, start=0.1)
+
+    def test_a_clean_note_passes_the_guard_with_room_to_spare(self):
+        note = synth_key(notes.note_to_midi("C4"), duration=3.0, n_partials=20, snr_db=30.0)
+        estimate = estimate_key(note.signal, note.sample_rate, "C4")
+        assert estimate.residual_cents_rms < MAX_RESIDUAL_CENTS / 10.0
+
+    def test_the_threshold_can_be_relaxed_for_inspection(self):
+        rng = np.random.default_rng(3)
+        sample_rate, f0 = 48_000, notes.note_to_hz("C4")
+        t = np.arange(3 * sample_rate) / sample_rate
+        signal = sum(
+            np.sin(2 * np.pi * notes.shift_cents(n * f0, rng.uniform(-60, 60)) * t)
+            / n
+            for n in range(1, 15)
+        )
+        loose = estimate_inharmonicity(
+            signal, sample_rate, f0, start=0.1, max_residual_cents=1e9
+        )
+        assert loose.residual_cents_rms > MAX_RESIDUAL_CENTS
+
+
+class TestSegmentChoice:
+    """The estimator should not need to be told where to look."""
+
+    def test_finds_the_note_behind_lead_in_silence(self):
+        note = synth_key(notes.note_to_midi("C4"), duration=3.0, n_partials=20)
+        signal = np.concatenate([np.zeros(int(0.8 * note.sample_rate)), note.signal])
+        estimate = estimate_key(signal, note.sample_rate, "C4")
+        assert relative_B_error(estimate.B, note.B) < 0.01
+        assert estimate.spectrum.segment.onset == pytest.approx(0.8, abs=0.05)
+
+    def test_avoids_a_segment_that_would_bias_the_low_partials(self):
+        # Reproduces the failure found on the first real recording: a dip and recovery in
+        # the envelope, and a short window sitting across it, biases the interpolated
+        # frequencies of the low partials by several cents.
+        note = synth_key(notes.note_to_midi("C4"), duration=3.0, n_partials=20)
+        t = np.arange(note.signal.size) / note.sample_rate
+        signal = note.signal * (1.0 - 0.9 * np.exp(-(((t - 0.25) / 0.06) ** 2)))
+
+        across = estimate_inharmonicity(
+            signal, note.sample_rate, notes.note_to_hz("C4"), start=0.15, duration=0.25,
+            max_residual_cents=1e9,
+        )
+        chosen = estimate_key(signal, note.sample_rate, "C4")
+        assert chosen.spectrum.segment.start >= 0.25  # moved past the dip
+        assert chosen.residual_cents_rms < across.residual_cents_rms
+        assert relative_B_error(chosen.B, note.B) < 0.01
 
 
 class TestReportedUncertainty:
