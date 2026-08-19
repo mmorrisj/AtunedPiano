@@ -20,14 +20,21 @@ from atunedpiano import notes
 from atunedpiano.inharmonicity import (
     B_MAX,
     MAX_RESIDUAL_CENTS,
+    allowed_residual_cents,
     InharmonicityError,
     estimate_inharmonicity,
     estimate_key,
     fit_linear,
     track_partials,
 )
-from atunedpiano.spectrum import analyse
-from atunedpiano.synth import partial_frequencies, synth_key, synth_note, typical_B
+from atunedpiano.spectrum import analyse, select_segment
+from atunedpiano.synth import (
+    f0_from_first_partial,
+    partial_frequencies,
+    synth_key,
+    synth_note,
+    typical_B,
+)
 
 KEYBOARD_SAMPLE = ["A0", "C1", "C2", "C3", "C4", "A4", "C5", "C6", "C7", "C8"]
 
@@ -283,6 +290,34 @@ class TestSegmentChoice:
         assert relative_B_error(estimate.B, note.B) < 0.01
         assert estimate.spectrum.segment.onset == pytest.approx(0.8, abs=0.05)
 
+    @pytest.mark.parametrize(
+        "lead,trail", [(0.0, 0.0), (0.371, 0.0), (2.0, 0.0), (0.0, 20.0), (1.234, 8.0)]
+    )
+    def test_silence_around_the_note_does_not_move_the_answer(self, lead, trail):
+        # Recordings have dead air at both ends: reaching for the key, and letting it ring
+        # out before stopping the recorder. Neither should reach the measurement. Leading
+        # room tone is skipped by onset detection. Trailing silence is excluded by the
+        # search taking the *earliest* steady candidate -- the note's own steady stretch
+        # always precedes the silence, so silence is never reached. The level floor and the
+        # residual guard sit behind that as backstops for a recording with no steady stretch
+        # at all; neither is what does the work here.
+        note = synth_key(notes.note_to_midi("C4"), duration=3.0, n_partials=20, snr_db=40.0)
+        rng = np.random.default_rng(0)
+        room = float(np.sqrt(np.mean(note.signal**2))) * 1e-3
+        padded = np.concatenate(
+            [
+                rng.normal(0.0, room, int(lead * note.sample_rate)),
+                note.signal,
+                rng.normal(0.0, room, int(trail * note.sample_rate)),
+            ]
+        )
+        reference = estimate_key(note.signal, note.sample_rate, "C4")
+        padded_estimate = estimate_key(padded, note.sample_rate, "C4")
+
+        assert padded_estimate.B == pytest.approx(reference.B, rel=0.005)
+        assert padded_estimate.n_partials == reference.n_partials
+        assert padded_estimate.spectrum.segment.onset == pytest.approx(lead, abs=0.05)
+
     def test_avoids_a_segment_that_would_bias_the_low_partials(self):
         # Reproduces the failure found on the first real recording: a dip and recovery in
         # the envelope, and a short window sitting across it, biases the interpolated
@@ -299,6 +334,159 @@ class TestSegmentChoice:
         assert chosen.spectrum.segment.start >= 0.25  # moved past the dip
         assert chosen.residual_cents_rms < across.residual_cents_rms
         assert relative_B_error(chosen.B, note.B) < 0.01
+
+
+class TestMissingLowPartials:
+    """A bass string can radiate nothing at all at its first few partials."""
+
+    def without_low_partials(self, midi, B, drop, *, sample_rate=48_000, snr_db=30.0, seed=0):
+        rng = np.random.default_rng(seed)
+        f0 = f0_from_first_partial(notes.midi_to_hz(midi), B)
+        freqs = partial_frequencies(f0, B, 24)
+        freqs = freqs[freqs < 0.98 * sample_rate / 2]
+        n = np.arange(1, freqs.size + 1, dtype=float)
+        amplitudes = np.exp(-((n - 5.0) ** 2) / 50.0)
+        amplitudes[:drop] = 0.0
+        t = np.arange(int(4.0 * sample_rate)) / sample_rate
+        envelope = np.exp(-t[None, :] / (4.0 * n[:, None] ** -0.7))
+        phases = rng.uniform(0.0, 2 * np.pi, (n.size, 1))
+        signal = (
+            amplitudes[:, None]
+            * np.sin(2 * np.pi * freqs[:, None] * t[None, :] + phases)
+            * envelope
+        ).sum(axis=0)
+        noise = np.sqrt(np.mean(signal**2)) * 10 ** (-snr_db / 20)
+        return signal + rng.normal(0.0, noise, signal.size), sample_rate
+
+    @pytest.mark.parametrize("drop", [1, 2, 3, 4, 5])
+    def test_recovers_B_with_the_lowest_partials_absent(self, drop):
+        # The miss counter is there to stop the walk running off the top of the series, not
+        # to stop it starting. With the first five partials gone the note is still perfectly
+        # measurable from partial six upward.
+        B = 3.6e-4
+        signal, sr = self.without_low_partials(24, B, drop)
+        estimate = estimate_key(signal, sr, 24)
+        assert relative_B_error(estimate.B, B) < 0.02
+        assert estimate.partials[0].index == drop + 1
+
+    def test_a_buried_fundamental_is_still_found(self):
+        # Buried is not absent: at -50 dB partial 1 is still a real peak and still tracked.
+        B = 3.6e-4
+        signal, sr = self.without_low_partials(24, B, 0)
+        estimate = estimate_key(signal, sr, 24)
+        assert estimate.partials[0].index == 1
+        assert relative_B_error(estimate.B, B) < 0.02
+
+
+class TestSearchWindow:
+    def test_never_reaches_the_neighbouring_partial(self):
+        # A window wider than half the gap to the next partial can grab the wrong one. The
+        # gap shrinks fast with n -- 1200 cents at n=1, 702 at n=2, 498 at n=3 -- so a fixed
+        # cap safe at the bottom is not safe a few partials up.
+        from atunedpiano.inharmonicity import _search_halfwidth_cents
+
+        for n in range(1, 12):
+            gap_to_neighbour = 1200.0 * np.log2((n + 1.0) / n)
+            for fitted in (0, 1, 2, 3):
+                halfwidth = _search_halfwidth_cents(
+                    n, fitted, search_cents=40.0, hint_cents=100.0
+                )
+                assert halfwidth < gap_to_neighbour / 2.0
+
+
+class TestMultipleStrikesEndToEnd:
+    def test_picks_the_usable_strike_over_an_earlier_poor_one(self):
+        # A quiet, short first strike followed by a full one -- the shape of the real C6 and
+        # C7 recordings, where the analysis used to lock onto whichever came first.
+        good = synth_key(60, duration=3.0, n_partials=20, seed=1)
+        weak = synth_key(60, duration=0.25, n_partials=3, seed=2)
+        sr = good.sample_rate
+        signal = np.zeros(int(8.0 * sr))
+        signal[int(0.5 * sr) : int(0.5 * sr) + weak.signal.size] += 0.05 * weak.signal
+        signal[int(3.0 * sr) : int(3.0 * sr) + good.signal.size] += good.signal
+
+        estimate = estimate_key(signal, sr, 60)
+        assert relative_B_error(estimate.B, good.B) < 0.01
+        assert estimate.spectrum.segment.start > 2.5
+
+
+class TestEvidenceScaledGuard:
+    """Fewer partials have to fit better, not merely as well."""
+
+    def test_allowance_grows_with_the_partial_count(self):
+        assert allowed_residual_cents(4) < allowed_residual_cents(6)
+        assert allowed_residual_cents(6) < allowed_residual_cents(8)
+        assert allowed_residual_cents(8) == MAX_RESIDUAL_CENTS
+        assert allowed_residual_cents(20) == MAX_RESIDUAL_CENTS
+
+    def test_four_partials_are_held_to_a_tighter_standard(self):
+        # Two parameters on four partials leave two degrees of freedom, and almost any four
+        # peaks can be fitted by some stiff-string curve.
+        assert allowed_residual_cents(4) <= MAX_RESIDUAL_CENTS / 2.0
+
+    def test_rejects_a_plausible_looking_fit_to_four_unrelated_peaks(self):
+        # The real case this came from: a segment inside C4's attack transient fitted four
+        # hammer-noise peaks with B eighty-seven times too high, at 2.66 cents residual --
+        # inside a flat 3-cent limit, outside an evidence-scaled one.
+        sample_rate = 48_000
+        t = np.arange(3 * sample_rate) / sample_rate
+        signal = sum(
+            np.sin(2 * np.pi * f * t) / (i + 1)
+            for i, f in enumerate([248.57, 515.50, 824.46, 1183.05])
+        )
+        with pytest.raises(InharmonicityError):
+            estimate_inharmonicity(signal, sample_rate, notes.note_to_hz("C4"), start=0.1)
+
+    def test_a_clean_four_partial_treble_fit_still_passes(self):
+        # C8 has only four partials below Nyquist at 48 kHz. The tighter standard must not
+        # cost the top octave, which cannot supply more partials however good the recording.
+        note = synth_key(108, duration=1.0, sample_rate=48_000)
+        estimate = estimate_key(note.signal, note.sample_rate, "C8")
+        assert estimate.n_partials <= 5
+        assert estimate.residual_cents_rms < allowed_residual_cents(estimate.n_partials)
+
+
+class TestSegmentEscalation:
+    """When the cheap segment choice is wrong, fit the alternatives instead of guessing."""
+
+    def never_steady(self, midi=84, seed=0):
+        """A note that is erratic while it sounds and flat once it is gone -- the C6 shape.
+
+        Heavy amplitude modulation means no window containing the note passes the steadiness
+        test, while the noise floor after it decays is perfectly flat and so scores as the
+        steadiest thing in the file. select_segment therefore falls back to a stretch with
+        no note in it. The steadiness proxy has no standing once its own precondition has
+        failed, and on the real C6 it picked an unfittable segment in exactly this way.
+        """
+        note = synth_key(midi, duration=1.2, n_partials=20, decay_time=0.35, seed=seed)
+        rng = np.random.default_rng(seed)
+        sr = note.sample_rate
+        signal = np.concatenate([note.signal, np.zeros(int(2.5 * sr))])
+        t = np.arange(signal.size) / sr
+        signal = signal * (
+            1.0 + 0.85 * np.sin(2 * np.pi * 3.1 * t) * np.sin(2 * np.pi * 1.7 * t + 0.4)
+        )
+        floor = float(np.sqrt(np.mean(note.signal**2))) * 0.05
+        return signal + rng.normal(0.0, floor, signal.size), sr, note.B
+
+    def test_no_segment_of_this_note_is_steady(self):
+        # Establishes the precondition the escalation exists for; without it the test below
+        # would pass for the wrong reason.
+        signal, sr, _ = self.never_steady()
+        chosen = select_segment(signal, sr, notes.midi_to_hz(84))
+        assert not chosen.is_steady
+
+    def test_recovers_B_anyway(self):
+        signal, sr, B = self.never_steady()
+        estimate = estimate_key(signal, sr, 84)
+        assert relative_B_error(estimate.B, B) < 0.05
+
+    def test_an_explicit_start_is_never_second_guessed(self):
+        # Escalation would defeat the purpose of --start, which exists to reproduce one
+        # specific reading.
+        signal, sr, _ = self.never_steady()
+        with pytest.raises(InharmonicityError):
+            estimate_key(signal, sr, 84, start=len(signal) / sr - 0.26)
 
 
 class TestReportedUncertainty:

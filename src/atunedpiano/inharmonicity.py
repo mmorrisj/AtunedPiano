@@ -34,7 +34,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from .notes import cents, midi_to_hz, note_to_hz
-from .spectrum import DEFAULT_ZERO_PAD, Spectrum, analyse
+from .spectrum import DEFAULT_ZERO_PAD, Spectrum, analyse, candidate_starts, find_onsets
 
 # Above this the stiff-string model stops describing a piano string, so a fit that wants a
 # larger B has almost certainly mis-indexed a partial.
@@ -47,6 +47,22 @@ B_MAX = 0.06
 # in between. Such a fit still returns a confident-looking B, which is precisely why it
 # has to be refused rather than reported.
 MAX_RESIDUAL_CENTS = 3.0
+
+
+def allowed_residual_cents(n_partials: int, ceiling: float = MAX_RESIDUAL_CENTS) -> float:
+    """Residual a fit is allowed, scaled by how much evidence it rests on.
+
+    Two parameters fitted to four partials leave two degrees of freedom, and almost any four
+    peaks can be fitted by *some* stiff-string curve. A segment inside C4's attack transient
+    was seen to fit four hammer-noise peaks -- 248, 515, 824 and 1183 Hz, none of them
+    partials of the note -- with B eighty-seven times too high and a residual of 2.66 cents,
+    comfortably inside a flat 3-cent limit. Fewer partials therefore have to fit better, not
+    merely as well.
+
+    Above eight partials the allowance is the full ceiling: by then a wrong trajectory cannot
+    stay consistent across that many indices.
+    """
+    return ceiling * min(1.0, max(n_partials - 2, 0) / 6.0)
 
 
 class InharmonicityError(RuntimeError):
@@ -187,10 +203,14 @@ def _search_halfwidth_cents(
     """
     if n_fitted >= 3:
         return search_cents
+    # Never look more than most of the way to the neighbouring partial. The gap from n to
+    # n+1 is 1200*log2((n+1)/n) cents, which shrinks fast: 1200 at n=1, 702 at n=2, 498 at
+    # n=3. A fixed cap that is safe at n=1 is wide enough to grab the wrong partial by n=3.
+    neighbour = 600.0 * np.log2((n + 1.0) / n)
     if n_fitted == 2:
-        return 2.0 * search_cents
+        return float(min(2.0 * search_cents, 0.9 * neighbour))
     span = 600.0 * np.log2((1.0 + B_MAX * n * n) / (1.0 + B_MAX))
-    return float(min(hint_cents + span, 340.0))
+    return float(min(hint_cents + span, 0.9 * neighbour))
 
 
 def track_partials(
@@ -234,7 +254,14 @@ def track_partials(
         peak = spectrum.peak_near(predicted, halfwidth, min_magnitude=min_magnitude)
         if peak is None:
             misses += 1
-            if misses >= max_consecutive_misses:
+            # The miss counter exists to stop the walk running past the top of the partial
+            # series, not to stop it starting. A bass string can radiate nothing at all at
+            # its first few partials -- the soundboard is too small to move that much air --
+            # and giving up there loses a note that is perfectly measurable from partial 4
+            # upward.
+            if found and misses >= max_consecutive_misses:
+                break
+            if not found and n >= max_partials // 2:
                 break
             continue
 
@@ -318,21 +345,155 @@ def estimate_inharmonicity(
         max_residual_cents: Refuse the fit if the surviving partials still disagree with
             the model by more than this in RMS. This is what stops a decayed tail, where
             the tracker is following noise peaks, from being reported as a measurement.
-        start: Analyse from this many seconds into the recording, skipping the search for a
-            steady segment. Use it to reproduce a specific reading.
+        start: Analyse from this many seconds into the recording, skipping both the search
+            for a steady segment and the choice between strikes. Use it to reproduce a
+            specific reading.
         attack_skip: Seconds of onset to discard. ``None`` scales it with the note.
         duration: Analysis window in seconds. ``None`` scales it with the note.
         zero_pad: FFT zero-padding factor, for sub-bin peak location.
 
+    A recording usually holds several strikes of the note, and they are not equally good.
+    Each is fitted and the best kept: best means the most partials among those that pass the
+    residual guard, with the residual breaking ties. Most partials rather than lowest
+    residual, because a fit gets easier as the note dies and fewer partials survive -- so
+    ranking by residual alone drifts toward the quietest, least informative strike, and the
+    upper partials it discards are the ones that determine B.
+
     Raises:
-        InharmonicityError: if fewer than ``min_partials`` usable partials are found, or if
-            the fitted model disagrees with them by more than ``max_residual_cents``.
+        InharmonicityError: if no strike yields ``min_partials`` usable partials fitting the
+            model within ``max_residual_cents``.
     """
+    if start is not None:
+        onsets: list[float | None] = [None]
+    else:
+        onsets = list(find_onsets(signal, sample_rate, f0_hint))
+
+    best: InharmonicityEstimate | None = None
+    failures: list[str] = []
+    for index, onset in enumerate(onsets):
+        following = onsets[index + 1] if index + 1 < len(onsets) else None
+        try:
+            candidate = _estimate_best_segment(
+                signal,
+                sample_rate,
+                f0_hint,
+                start=start,
+                onset=onset,
+                next_onset=following,
+                max_partials=max_partials,
+                min_partials=min_partials,
+                search_cents=search_cents,
+                hint_cents=hint_cents,
+                outlier_cents=outlier_cents,
+                max_residual_cents=max_residual_cents,
+                attack_skip=attack_skip,
+                duration=duration,
+                zero_pad=zero_pad,
+            )
+        except InharmonicityError as error:
+            failures.append(f"strike at {onset if onset is not None else start:.2f}s: {error}")
+            continue
+        if best is None or (candidate.n_partials, -candidate.residual_cents_rms) > (
+            best.n_partials,
+            -best.residual_cents_rms,
+        ):
+            best = candidate
+
+    if best is None:
+        raise InharmonicityError(
+            f"no usable strike in {len(onsets)} found near {f0_hint:.2f} Hz -- "
+            + "; ".join(failures[:3])
+        )
+    return best
+
+
+def _estimate_best_segment(
+    signal: np.ndarray,
+    sample_rate: int,
+    f0_hint: float,
+    *,
+    start: float | None,
+    onset: float | None,
+    next_onset: float | None,
+    **kwargs,
+) -> InharmonicityEstimate:
+    """Fit one strike, escalating from the cheap segment choice to an exhaustive one.
+
+    The steadiness heuristic in :func:`~atunedpiano.spectrum.select_segment` gets it right on
+    most notes for one fit's worth of work, so it is tried first and its answer stands when
+    it works. When it does not -- in the C-note set, C6, where no segment of the note is
+    steady by the usual standard and the fallback picks the least-unsteady one, which
+    happens to be unfittable -- the alternatives are fitted and judged by their results
+    rather than by a proxy that has already been shown not to apply.
+
+    Escalating rather than always scanning keeps the common path at one fit. Nothing is lost
+    by it: among segments the fast path accepts, B varies by about 0.15% on the reference
+    recording, which is the reproducibility floor anyway.
+    """
+    try:
+        return _estimate_one_segment(
+            signal, sample_rate, f0_hint, start=start, onset=onset,
+            next_onset=next_onset, **kwargs,
+        )
+    except InharmonicityError as error:
+        if start is not None:
+            raise
+        # Python unbinds the `except` name on exit, so keep it for the re-raise below.
+        first_error = error
+
+    best: InharmonicityEstimate | None = None
+    for candidate_start in candidate_starts(
+        signal,
+        sample_rate,
+        f0_hint,
+        onset=onset,
+        next_onset=next_onset,
+        attack_skip=kwargs.get("attack_skip"),
+        duration=kwargs.get("duration"),
+    ):
+        try:
+            fitted = _estimate_one_segment(
+                signal, sample_rate, f0_hint, start=candidate_start, onset=onset,
+                next_onset=next_onset, **kwargs,
+            )
+        except InharmonicityError:
+            continue
+        if best is None or (fitted.n_partials, -fitted.residual_cents_rms) > (
+            best.n_partials,
+            -best.residual_cents_rms,
+        ):
+            best = fitted
+    if best is None:
+        raise first_error
+    return best
+
+
+def _estimate_one_segment(
+    signal: np.ndarray,
+    sample_rate: int,
+    f0_hint: float,
+    *,
+    start: float | None,
+    onset: float | None,
+    next_onset: float | None,
+    max_partials: int,
+    min_partials: int,
+    search_cents: float,
+    hint_cents: float,
+    outlier_cents: float,
+    max_residual_cents: float,
+    attack_skip: float | None,
+    duration: float | None,
+    zero_pad: int,
+) -> InharmonicityEstimate:
+    """Fit one strike. See :func:`estimate_inharmonicity` for the argument meanings."""
     spectrum = analyse(
         signal,
         sample_rate,
         f0_hint,
         start=start,
+        onset=onset,
+        next_onset=next_onset,
         attack_skip=attack_skip,
         duration=duration,
         zero_pad=zero_pad,
@@ -356,13 +517,14 @@ def estimate_inharmonicity(
 
     residuals = _residual_cents(f0, B, indices, frequencies)
     residual_rms = float(np.sqrt(np.mean(residuals**2)))
-    if residual_rms > max_residual_cents:
+    allowed = allowed_residual_cents(len(kept), max_residual_cents)
+    if residual_rms > allowed:
         # The fit converged and B looks like a number, which is exactly the danger. Partials
         # this far from the model are not partials of this string.
         raise InharmonicityError(
             f"fit residual {residual_rms:.2f} cents rms over {len(kept)} partials exceeds "
-            f"{max_residual_cents:.2f}; the segment analysed does not contain a clean "
-            f"partial series (decayed too far, or the wrong note)"
+            f"the {allowed:.2f} allowed at that partial count; the segment analysed does "
+            f"not contain a clean partial series (decayed too far, or the wrong note)"
         )
 
     partials = tuple(

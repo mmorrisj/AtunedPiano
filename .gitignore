@@ -9,8 +9,11 @@ dist/
 .coverage
 htmlcov/
 
-# Reference recordings are kept out of git by default -- they are large and personal to
-# one piano. Keep the protocol and the notes file, not the audio.
-data/reference/*.wav
-data/reference/*.flac
-data/reference/*.aiff
+# Reference recordings: commit the compressed source, ignore the decoded WAV. The source is
+# small enough to version (the first anchor is 105 KB) and it is what makes the anchor
+# reproducible for anyone cloning; the WAV is derived from it by a documented command and is
+# an order of magnitude larger. Uncompressed captures stay out entirely -- if a future anchor
+# is recorded straight to WAV it is too big to version, and NOTES.md carries the numbers.
+data/**/*.wav
+data/**/*.flac
+data/**/*.aiff

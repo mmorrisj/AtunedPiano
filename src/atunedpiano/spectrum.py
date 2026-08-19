@@ -53,6 +53,19 @@ ENVELOPE_CYCLES = 3.0
 # toward its peak.
 ONSET_THRESHOLD_DB = -20.0
 
+# A strike is a rise of at least this much above the quietest moment just before it. Rise
+# rather than level, because a re-strike on a still-ringing string never falls quiet first.
+ONSET_RISE_DB = 6.0
+
+# Strikes quieter than this relative to the file's peak are not worth analysing.
+ONSET_FLOOR_DB = -30.0
+
+# Two rises closer together than this are one strike seen twice.
+MIN_STRIKE_SEPARATION = 0.5
+
+# Cap on strikes analysed per file, so a long noisy recording cannot spiral.
+MAX_STRIKES = 8
+
 # A candidate segment is "steady" when its log envelope departs from a straight line by
 # less than this. Straight in log terms means exponential decay, which is what a freely
 # vibrating string does; a beat null, a double-decay knee or a compressor pumping all show
@@ -227,6 +240,62 @@ def envelope(
     return starts / sample_rate, 10.0 * np.log10(np.maximum(power, peak * 1e-12) / peak)
 
 
+def find_onsets(
+    signal: np.ndarray,
+    sample_rate: int,
+    f0_hint: float,
+    *,
+    rise_db: float = ONSET_RISE_DB,
+    floor_db: float = ONSET_FLOOR_DB,
+    min_separation: float = MIN_STRIKE_SEPARATION,
+    limit: int = MAX_STRIKES,
+) -> list[float]:
+    """Times of every strike in the recording, earliest first.
+
+    Nobody records one note once. They play it three or four times and keep the file, and
+    the takes are not equally good -- in the C-note set the loudest strike of C7 was five
+    seconds after the first, and analysing the first one found two partials where the best
+    one has more. Treating the file as a single note throws that away.
+
+    A strike is a sharp rise, not merely a loud moment: a re-strike on top of a still
+    ringing string never falls quiet first, so a level threshold alone would miss it. Each
+    onset is the point where the level begins climbing toward a local maximum at least
+    ``rise_db`` above the quietest moment just before it.
+    """
+    times, levels = envelope(signal, sample_rate, f0_hint)
+    if times.size < 3:
+        return [float(times[0])] if times.size else [0.0]
+
+    lookback = max(int(round(0.15 / ENVELOPE_HOP_SECONDS)), 1)
+    onsets: list[float] = []
+    for i in range(1, levels.size):
+        if levels[i] < floor_db:
+            continue
+        window = levels[max(0, i - lookback) : i]
+        if window.size == 0 or levels[i] - window.min() < rise_db:
+            continue
+        # Walk back to where this rise started rather than reporting its midpoint, but no
+        # further than the rise itself accounts for. An unbounded walk down a shallow
+        # gradient wanders into the room tone before the note and puts the onset seconds
+        # early.
+        floor = levels[i] - rise_db
+        start = i
+        limit = max(0, i - lookback)
+        while start > limit and levels[start - 1] < levels[start] and levels[start - 1] > floor:
+            start -= 1
+        candidate = float(times[start])
+        if onsets and candidate - onsets[-1] < min_separation:
+            continue
+        onsets.append(candidate)
+        if len(onsets) >= limit:
+            break
+
+    if not onsets:
+        above = np.flatnonzero(levels > ONSET_THRESHOLD_DB)
+        onsets = [float(times[above[0]])] if above.size else [0.0]
+    return onsets
+
+
 def find_onset(signal: np.ndarray, sample_rate: int, f0_hint: float) -> float:
     """Time at which the note starts, in seconds from the beginning of the file.
 
@@ -234,10 +303,11 @@ def find_onset(signal: np.ndarray, sample_rate: int, f0_hint: float) -> float:
     silence. Measuring the attack skip from the start of the file rather than from the note
     lands the analysis somewhere arbitrary, which is how the first reference recording came
     to be analysed across its own attack.
+
+    This reports the first strike. When a file holds several, :func:`find_onsets` lists them
+    all and the estimator picks between them.
     """
-    times, levels = envelope(signal, sample_rate, f0_hint)
-    above = np.flatnonzero(levels > ONSET_THRESHOLD_DB)
-    return float(times[above[0]]) if above.size else 0.0
+    return find_onsets(signal, sample_rate, f0_hint)[0]
 
 
 def _score_window(
@@ -257,12 +327,57 @@ def _score_window(
     return float(np.sqrt(np.mean((level - fit) ** 2))), float(np.mean(level))
 
 
+def candidate_starts(
+    signal: np.ndarray,
+    sample_rate: int,
+    f0_hint: float,
+    *,
+    onset: float | None = None,
+    next_onset: float | None = None,
+    attack_skip: float | None = None,
+    duration: float | None = None,
+    min_level_db: float = MIN_LEVEL_DB,
+    limit: int = 16,
+) -> list[float]:
+    """Every segment start worth trying inside one strike, earliest first.
+
+    :func:`select_segment` picks one by envelope steadiness, which is cheap and right most
+    of the time. When it is wrong there is nothing to fall back on but the same proxy, so
+    this enumerates the alternatives for a caller that can afford to fit them and judge by
+    the result instead.
+    """
+    signal = np.asarray(signal, dtype=float)
+    if attack_skip is None:
+        attack_skip = attack_skip_seconds(f0_hint)
+    if duration is None:
+        duration = window_seconds(f0_hint)
+    if onset is None:
+        onset = find_onset(signal, sample_rate, f0_hint)
+
+    times, levels = envelope(signal, sample_rate, f0_hint)
+    first = onset + attack_skip
+    last = max(first, signal.size / sample_rate - duration)
+    if next_onset is not None:
+        last = min(last, max(first, next_onset - duration))
+
+    starts = [
+        float(c)
+        for c in np.arange(first, last + 1e-9, CANDIDATE_HOP_SECONDS)
+        if _score_window(times, levels, c, duration)[1] >= min_level_db
+    ]
+    if len(starts) > limit:
+        starts = [starts[i] for i in np.linspace(0, len(starts) - 1, limit).astype(int)]
+    return starts
+
+
 def select_segment(
     signal: np.ndarray,
     sample_rate: int,
     f0_hint: float,
     *,
     start: float | None = None,
+    onset: float | None = None,
+    next_onset: float | None = None,
     attack_skip: float | None = None,
     duration: float | None = None,
     steady_tolerance_db: float = STEADY_TOLERANCE_DB,
@@ -273,8 +388,12 @@ def select_segment(
     With ``start`` given, that slice is used as-is (seconds from the beginning of the file)
     and no search happens -- useful for reproducing a specific reading. Otherwise the onset
     is detected, ``attack_skip`` is measured from *there*, and the earliest window whose
-    envelope decays smoothly is taken. Earliest matters: the longer you wait, the fewer
-    upper partials are still above the noise, and those are what determine B.
+    envelope decays smoothly is taken. Earliest matters twice over: the longer you wait, the
+    fewer upper partials are still above the noise, and those are what determine B; and
+    preferring the earliest is also what keeps trailing silence out of the result, since a
+    note's own steady stretch always precedes the dead air after it. ``min_level_db`` is a
+    backstop for the case where no candidate is steady, not the mechanism that excludes
+    silence.
 
     Falls back to whatever is available on a recording too short for the ideal window, and
     to the steadiest candidate if none clears the tolerance, rather than refusing outright.
@@ -295,12 +414,17 @@ def select_segment(
             f"signal too short to analyse: {signal.size} samples at {sample_rate} Hz"
         )
 
-    onset = 0.0 if start is not None else find_onset(signal, sample_rate, f0_hint)
+    if start is not None:
+        onset = 0.0 if onset is None else onset
+    elif onset is None:
+        onset = find_onset(signal, sample_rate, f0_hint)
     searched = start is None
     if searched:
         times, levels = envelope(signal, sample_rate, f0_hint)
         first = onset + attack_skip
         last = max(first, signal.size / sample_rate - duration)
+        if next_onset is not None:
+            last = min(last, max(first, next_onset - duration))
         candidates = np.arange(first, last + 1e-9, CANDIDATE_HOP_SECONDS)
         if candidates.size == 0:
             candidates = np.array([first])
@@ -366,6 +490,8 @@ def analyse(
     f0_hint: float,
     *,
     start: float | None = None,
+    onset: float | None = None,
+    next_onset: float | None = None,
     attack_skip: float | None = None,
     duration: float | None = None,
     zero_pad: int = DEFAULT_ZERO_PAD,
@@ -381,6 +507,8 @@ def analyse(
         sample_rate,
         f0_hint,
         start=start,
+        onset=onset,
+        next_onset=next_onset,
         attack_skip=attack_skip,
         duration=duration,
     )

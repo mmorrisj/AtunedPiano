@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from atunedpiano import notes, spectrum
-from atunedpiano.synth import synth_note
+from atunedpiano.synth import synth_key, synth_note
 
 
 def sine(frequency: float, duration: float, sample_rate: int = 48_000) -> np.ndarray:
@@ -203,3 +203,52 @@ class TestSteadySegmentSearch:
         assert spec.segment is not None
         assert len(spec.segment) == int(round(spec.segment.duration * note.sample_rate))
         assert spec.segment.level_db <= 0.0
+
+
+class TestMultipleStrikes:
+    """Nobody records one note once."""
+
+    def strikes_at(self, times, midi=60, sample_rate=48_000, gain=None):
+        """A recording containing several strikes of one note, at given times."""
+        note = synth_key(midi, duration=2.5, n_partials=20, sample_rate=sample_rate)
+        total = int((max(times) + 3.0) * sample_rate)
+        signal = np.zeros(total)
+        for i, at in enumerate(times):
+            start = int(at * sample_rate)
+            end = min(start + note.signal.size, total)
+            level = 1.0 if gain is None else gain[i]
+            signal[start:end] += level * note.signal[: end - start]
+        return signal, sample_rate
+
+    def test_finds_every_strike(self):
+        signal, sr = self.strikes_at([0.5, 3.5, 6.5])
+        onsets = spectrum.find_onsets(signal, sr, notes.midi_to_hz(60))
+        assert len(onsets) == 3
+        for found, expected in zip(onsets, [0.5, 3.5, 6.5]):
+            assert found == pytest.approx(expected, abs=0.1)
+
+    def test_finds_a_restrike_over_a_ringing_string(self):
+        # The second strike lands while the first is still sounding, so the level never
+        # falls back to silence. A threshold crossing would miss it; a rise does not.
+        signal, sr = self.strikes_at([0.5, 1.6])
+        assert len(spectrum.find_onsets(signal, sr, notes.midi_to_hz(60))) == 2
+
+    def test_ignores_rises_too_small_to_be_a_strike(self):
+        signal, sr = self.strikes_at([0.5, 3.5], gain=[1.0, 0.005])
+        assert len(spectrum.find_onsets(signal, sr, notes.midi_to_hz(60))) == 1
+
+    def test_one_strike_still_reports_one(self):
+        note = synth_key(60, duration=3.0, n_partials=20)
+        assert len(spectrum.find_onsets(note.signal, note.sample_rate, notes.midi_to_hz(60))) == 1
+
+    def test_find_onset_reports_the_first(self):
+        signal, sr = self.strikes_at([0.5, 3.5, 6.5])
+        assert spectrum.find_onset(signal, sr, notes.midi_to_hz(60)) == pytest.approx(0.5, abs=0.1)
+
+    def test_candidates_stop_before_the_next_strike(self):
+        signal, sr = self.strikes_at([0.5, 3.5])
+        starts = spectrum.candidate_starts(
+            signal, sr, notes.midi_to_hz(60), onset=0.5, next_onset=3.5, duration=0.25
+        )
+        assert starts
+        assert max(starts) <= 3.5 - 0.25 + 1e-9
