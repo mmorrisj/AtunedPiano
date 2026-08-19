@@ -125,6 +125,47 @@ Once segment selection improved, the difference collapsed to 1.15%. **The number
 because the estimator changed, which is exactly the situation "Interpreting a change" below
 is for.** Settling this needs several takes of each condition, not one of each.
 
+## Take 2 (2026-08-18) — cross-session agreement
+
+A second full pass, C1 through C7, same phone and format, recorded louder (C6 peaks at 0.79
+against 0.33 first time). Committed under `data/take2/`.
+
+| Key | take 1 | take 2 | difference |
+|---|---|---|---|
+| C1 | 3.684e-4 | 3.683e-4 | −0.02% |
+| C2 | 1.589e-4 | 1.611e-4 | +1.34% |
+| C3 | 1.714e-4 | 1.748e-4 | +1.97% |
+| C4 | 3.299e-4 | 3.198e-4 | **−3.08%** |
+| C5 | 7.404e-4 | 7.278e-4 | −1.70% |
+| C6 | 1.939e-3 | 2.318e-3 | +19.6% |
+| C7 | refused | refused | — |
+
+**Cross-session agreement is worse than within-session, and C4 is the warning.** Three takes
+in one sitting agreed to 0.24%; the same note across two sittings differs by 3.08%, thirteen
+times worse. B is a physical property of a steel wire — it does not drift in a few hours —
+so the difference is measurement, not piano.
+
+Scanning every segment of each recording shows where it comes from. The interquartile spread
+of B across segments within one file is 0.8% and 1.0% for the first two take-1 C4 files, 7.2%
+for the third, and **13.9%** for the take-2 file. The take-2 C4 recording is simply less
+internally consistent, and its disagreement with take 1 is about the size of its own internal
+scatter. The 0.24% from three consecutive takes was optimistic: takes recorded back to back
+share whatever the session's mic placement, strike and wedge seating happened to be.
+
+**Working figure: about 2% between sessions in the midrange and bass, and C6 is not
+measurable to better than 20%.** Treat 0.24% as the floor of the method on a good recording,
+not as the accuracy of any single number here.
+
+The C1 agreement at −0.02% is luck at this sample size, not evidence that the bass is the
+best-determined band; its two within-session takes differ by 1.5%.
+
+### What take 2 did not change
+
+C7 still refuses on both takes, despite the louder capture. Its partials above the third are
+simply not in the file. Louder helped every other note and did not help this one, which
+points at the capture chain rather than the strike: phone capsule roll-off above 5 kHz and
+128 kbps AAC, exactly where C7's evidence lives.
+
 ## Recordings
 
 | File | Key | Piano | Mic / room | Sample rate | Date | Notes |
@@ -271,6 +312,26 @@ three partials: partial 3 sits 60 dB below partial 1. At 2093 Hz there are few s
 partials to begin with, the phone capsule rolls off above 5 kHz, and 128 kbps AAC is least
 generous exactly where the content is quietest and highest. The top octave needs a closer
 mic, a firmer strike, lossless capture and 96 kHz.
+
+## A low residual is not proof the fit is right
+
+Scanning every segment of the C4 recordings turned up something worth keeping. A segment
+inside the attack transient found four peaks — 248.57, 515.50, 824.46 and 1183.05 Hz, none
+of them partials of C4, whose first four sit at 262, 524, 787 and 1050 — fitted them with
+B = 2.88e-2, eighty-seven times too high, and produced a residual of 2.66 cents. Under the
+flat 3-cent guard that was a pass, complete with a 2% standard error on B.
+
+Two parameters fitted to four partials leave two degrees of freedom, and almost any four
+peaks can be fitted by *some* stiff-string curve. The guard is now scaled by the evidence
+behind the fit: the full 3 cents at eight partials or more, a third of that at four. Fewer
+partials must fit better, not merely as well.
+
+This does not affect any result in the tables above — the automatic segment choice never
+picks that segment, and it was only reached by forcing `--start`. It matters because it is
+a worked example of the failure this whole project is built to catch: a converged fit, a
+plausible-looking number, a tight error bar, and nothing behind any of it. The residual
+column is the check, and now the standard it is held to depends on how much there is to
+check.
 
 ## Interpreting a change
 

@@ -20,6 +20,7 @@ from atunedpiano import notes
 from atunedpiano.inharmonicity import (
     B_MAX,
     MAX_RESIDUAL_CENTS,
+    allowed_residual_cents,
     InharmonicityError,
     estimate_inharmonicity,
     estimate_key,
@@ -407,6 +408,42 @@ class TestMultipleStrikesEndToEnd:
         estimate = estimate_key(signal, sr, 60)
         assert relative_B_error(estimate.B, good.B) < 0.01
         assert estimate.spectrum.segment.start > 2.5
+
+
+class TestEvidenceScaledGuard:
+    """Fewer partials have to fit better, not merely as well."""
+
+    def test_allowance_grows_with_the_partial_count(self):
+        assert allowed_residual_cents(4) < allowed_residual_cents(6)
+        assert allowed_residual_cents(6) < allowed_residual_cents(8)
+        assert allowed_residual_cents(8) == MAX_RESIDUAL_CENTS
+        assert allowed_residual_cents(20) == MAX_RESIDUAL_CENTS
+
+    def test_four_partials_are_held_to_a_tighter_standard(self):
+        # Two parameters on four partials leave two degrees of freedom, and almost any four
+        # peaks can be fitted by some stiff-string curve.
+        assert allowed_residual_cents(4) <= MAX_RESIDUAL_CENTS / 2.0
+
+    def test_rejects_a_plausible_looking_fit_to_four_unrelated_peaks(self):
+        # The real case this came from: a segment inside C4's attack transient fitted four
+        # hammer-noise peaks with B eighty-seven times too high, at 2.66 cents residual --
+        # inside a flat 3-cent limit, outside an evidence-scaled one.
+        sample_rate = 48_000
+        t = np.arange(3 * sample_rate) / sample_rate
+        signal = sum(
+            np.sin(2 * np.pi * f * t) / (i + 1)
+            for i, f in enumerate([248.57, 515.50, 824.46, 1183.05])
+        )
+        with pytest.raises(InharmonicityError):
+            estimate_inharmonicity(signal, sample_rate, notes.note_to_hz("C4"), start=0.1)
+
+    def test_a_clean_four_partial_treble_fit_still_passes(self):
+        # C8 has only four partials below Nyquist at 48 kHz. The tighter standard must not
+        # cost the top octave, which cannot supply more partials however good the recording.
+        note = synth_key(108, duration=1.0, sample_rate=48_000)
+        estimate = estimate_key(note.signal, note.sample_rate, "C8")
+        assert estimate.n_partials <= 5
+        assert estimate.residual_cents_rms < allowed_residual_cents(estimate.n_partials)
 
 
 class TestSegmentEscalation:

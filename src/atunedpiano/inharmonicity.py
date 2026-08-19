@@ -49,6 +49,22 @@ B_MAX = 0.06
 MAX_RESIDUAL_CENTS = 3.0
 
 
+def allowed_residual_cents(n_partials: int, ceiling: float = MAX_RESIDUAL_CENTS) -> float:
+    """Residual a fit is allowed, scaled by how much evidence it rests on.
+
+    Two parameters fitted to four partials leave two degrees of freedom, and almost any four
+    peaks can be fitted by *some* stiff-string curve. A segment inside C4's attack transient
+    was seen to fit four hammer-noise peaks -- 248, 515, 824 and 1183 Hz, none of them
+    partials of the note -- with B eighty-seven times too high and a residual of 2.66 cents,
+    comfortably inside a flat 3-cent limit. Fewer partials therefore have to fit better, not
+    merely as well.
+
+    Above eight partials the allowance is the full ceiling: by then a wrong trajectory cannot
+    stay consistent across that many indices.
+    """
+    return ceiling * min(1.0, max(n_partials - 2, 0) / 6.0)
+
+
 class InharmonicityError(RuntimeError):
     """Raised when a note yields too little usable spectral structure to fit."""
 
@@ -501,13 +517,14 @@ def _estimate_one_segment(
 
     residuals = _residual_cents(f0, B, indices, frequencies)
     residual_rms = float(np.sqrt(np.mean(residuals**2)))
-    if residual_rms > max_residual_cents:
+    allowed = allowed_residual_cents(len(kept), max_residual_cents)
+    if residual_rms > allowed:
         # The fit converged and B looks like a number, which is exactly the danger. Partials
         # this far from the model are not partials of this string.
         raise InharmonicityError(
             f"fit residual {residual_rms:.2f} cents rms over {len(kept)} partials exceeds "
-            f"{max_residual_cents:.2f}; the segment analysed does not contain a clean "
-            f"partial series (decayed too far, or the wrong note)"
+            f"the {allowed:.2f} allowed at that partial count; the segment analysed does "
+            f"not contain a clean partial series (decayed too far, or the wrong note)"
         )
 
     partials = tuple(
